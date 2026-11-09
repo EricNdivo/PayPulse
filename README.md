@@ -1,1 +1,2 @@
 # PayPulse
+A Django-based REST API that intelligently routes payment transactions across multiple gateways to optimize for cost, speed, and reliability. Each transaction is scored in real time by a fraud detection layer that combines graph analysis of links between accounts, devices, and payment methods with a machine learning model trained on transaction behaviour. The system balances load across gateways based on live health metrics, automatically fails over when a gateway degrades, and uses idempotent retries to prevent duplicate charges.
