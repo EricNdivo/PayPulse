@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PayPulse Live</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d38; --text: #e6edf3; --muted: #8b96a5;
+    --ok: #3fb97f; --warn: #e5a639; --bad: #ef5b5b; --info: #5aa2ff; --accent: #7c8cff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f4f6f9; --panel: #fff; --line: #dde2e9; --text: #16202b; --muted: #627083;
+            --ok: #1a8f5a; --warn: #b87708; --bad: #d03b3b; --info: #1f6fdb; --accent: #4a5ad8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  header h1 span { color: var(--accent); }
+  .pill { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  main { padding: 16px 20px 28px; display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .card h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .kpis { grid-column: 1 / -1; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .kpi .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .kpi .s { color: var(--muted); font-size: 12px; }
+  .c-feed { grid-column: span 7; } .c-gw { grid-column: span 5; }
+  .c-graph { grid-column: span 7; } .c-alerts { grid-column: span 5; }
+  .c-rate { grid-column: 1 / -1; }
+  @media (max-width: 1000px) { .c-feed, .c-gw, .c-graph, .c-alerts { grid-column: 1 / -1; } }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 8px 6px 0; }
+  td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+  td.num, th.num { text-align: right; }
+  .feed-wrap { max-height: 420px; overflow: auto; }
+  tr.new td { animation: flash 1.4s ease-out; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } to { background: transparent; } }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+  .b-completed { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, transparent); }
+  .b-flagged { color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent); }
+  .b-failed { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+  .b-pending { color: var(--info); background: color-mix(in srgb, var(--info) 15%, transparent); }
+  .gw { padding: 10px 0; border-top: 1px solid var(--line); }
+  .gw:first-of-type { border-top: 0; padding-top: 0; }
+  .gw-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .gw-name { font-weight: 600; }
+  .gw.off .gw-name { text-decoration: line-through; color: var(--muted); }
+  .gw-meta { color: var(--muted); font-size: 12px; }
+  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin: 7px 0 3px; }
+  .bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--ok); }
+  .bar > b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: .7; }
+  #graph { height: 360px; border-radius: 8px; background: color-mix(in srgb, var(--bg) 60%, transparent); }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin-top: 8px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; }
+  .alert { padding: 9px 0; border-top: 1px solid var(--line); }
+  .alert:first-of-type { border-top: 0; padding-top: 0; }
+  .alert .top { display: flex; justify-content: space-between; gap: 8px; }
+  .score { color: var(--bad); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .alert .why { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+  svg.spark { width: 100%; height: 90px; display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pay<span>Pulse</span> · live</h1>
+  <div class="pill"><span id="updated">waiting for data…</span><span class="dot" id="dot"></span><span id="conn">connecting</span></div>
+</header>
+<main>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="card c-rate"><h2>Throughput · last 5 min <span style="float:right;text-transform:none;letter-spacing:0">
+    <span style="color:var(--accent)">■</span> payments &nbsp; <span style="color:var(--bad)">■</span> flagged</span></h2>
+    <svg class="spark" id="spark" viewBox="0 0 600 90" preserveAspectRatio="none"></svg></section>
+
+  <section class="card c-feed"><h2>Live transactions</h2>
+    <div class="feed-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Merchant</th><th class="num">Amount</th><th>Gateway</th><th>Status</th></tr></thead>
+    <tbody id="feed"></tbody></table></div></section>
+
+  <section class="card c-gw"><h2>Gateway health</h2><div id="gws"></div>
+    <div class="legend"><span>bar = observed success rate</span><span>| marker = configured</span></div></section>
+
+  <section class="card c-graph"><h2>Payment network</h2><div id="graph"></div>
+    <div class="legend"><span><i style="background:var(--info);border-radius:50%"></i>user</span>
+    <span><i style="background:var(--muted)"></i>merchant</span>
+    <span><i style="background:var(--bad)"></i>flagged link</span></div></section>
+
+  <section class="card c-alerts"><h2>Fraud alerts</h2><div id="alerts"></div></section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;   // textContent only: merchant names are user-supplied
+  return e;
+}
+const money = (n, c) => (c ? c + " " : "$") + n.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const pct = (x) => x == null ? "—" : (x * 100).toFixed(1) + "%";
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+/* ---------- KPIs ---------- */
+function renderKpis(k) {
+  const items = [
+    ["Payments", k.total.toLocaleString(), k.pending ? k.pending + " pending" : "all settled"],
+    ["Approved volume", money(k.volume_completed), k.completed.toLocaleString() + " completed"],
+    ["Approval rate", pct(k.approval_rate), ""],
+    ["Flagged", k.flagged.toLocaleString(), pct(k.flag_rate) + " of payments"],
+    ["Gateway failures", k.failed.toLocaleString(), "declined at gateway"],
+  ];
+  const root = $("kpis"); root.replaceChildren();
+  for (const [label, value, sub] of items) {
+    const c = el("div", "card kpi");
+    c.append(el("h2", "", label), el("div", "v", value), el("div", "s", sub || " "));
+    root.append(c);
+  }
+}
+
+/* ---------- throughput sparkline ---------- */
+function renderSpark(series) {
+  const svg = $("spark"), W = 600, H = 90, b = series.buckets, n = b.length;
+  const max = Math.max(3, ...b.map((x) => x[0]));
+  const bw = W / n;
+  svg.replaceChildren();
+  const ns = "http://www.w3.org/2000/svg";
+  b.forEach(([all, flagged], i) => {
+    for (const [val, color] of [[all, "--accent"], [flagged, "--bad"]]) {
+      if (!val) continue;
+      const h = Math.max(2, (val / max) * (H - 4));
+      const r = document.createElementNS(ns, "rect");
+      r.setAttribute("x", i * bw + 1); r.setAttribute("width", Math.max(1, bw - 2));
+      r.setAttribute("y", H - h); r.setAttribute("height", h); r.setAttribute("rx", 1.5);
+      r.setAttribute("fill", css(color));
+      svg.append(r);
+    }
+  });
+}
+
+/* ---------- feed ---------- */
+const seen = new Set(); let firstFeed = true;
+function renderFeed(txs) {
+  const body = $("feed"); body.replaceChildren();
+  if (!txs.length) { const tr = el("tr"); const td = el("td", "empty", "No transactions yet — run `manage.py simulate`"); td.colSpan = 6; tr.append(td); body.append(tr); return; }
+  for (const t of txs) {
+    const tr = el("tr");
+    if (!firstFeed && !seen.has(t.id + t.status)) tr.className = "new";
+    seen.add(t.id + t.status);
+    tr.append(
+      el("td", "", new Date(t.created_at).toLocaleTimeString()),
+      el("td", "", t.user), el("td", "", t.merchant),
+      el("td", "num", money(t.amount, t.currency)), el("td", "", t.gateway || "—"));
+    const s = el("td"); s.append(el("span", "badge b-" + t.status, t.status)); tr.append(s);
+    body.append(tr);
+  }
+  firstFeed = false;
+}
+
+/* ---------- gateways ---------- */
+function renderGateways(gws) {
+  const root = $("gws"); root.replaceChildren();
+  if (!gws.length) root.append(el("div", "empty", "No gateways — run `manage.py seed`"));
+  for (const g of gws) {
+    const d = el("div", "gw" + (g.active ? "" : " off"));
+    const head = el("div", "gw-head");
+    head.append(el("span", "gw-name", g.name + (g.active ? "" : " (offline)")),
+                el("span", "gw-meta", `${money(g.cost)} · ${(g.latency * 1000).toFixed(0)} ms`));
+    const bar = el("div", "bar");
+    const fill = el("i"); fill.style.width = ((g.observed_success ?? 0) * 100) + "%";
+    if (g.observed_success != null && g.observed_success < 0.9) fill.style.background = css("--warn");
+    if (g.observed_success != null && g.observed_success < 0.75) fill.style.background = css("--bad");
+    const mark = el("b"); mark.style.left = `calc(${g.configured_success * 100}% - 1px)`;
+    bar.append(fill, mark);
+    d.append(head, bar, el("div", "gw-meta",
+      `${pct(g.observed_success)} observed (target ${pct(g.configured_success)}) · ${g.completed} ok · ${g.failed} failed · ${g.flagged} flagged`));
+    root.append(d);
+  }
+}
+
+/* ---------- alerts ---------- */
+function renderAlerts(alerts) {
+  const root = $("alerts"); root.replaceChildren();
+  if (!alerts.length) root.append(el("div", "empty", "No fraud alerts 🎉"));
+  for (const a of alerts) {
+    const d = el("div", "alert"), top = el("div", "top");
+    top.append(el("span", "", `${a.user} → ${a.merchant} · ${money(a.amount)}`), el("span", "score", a.score.toFixed(2)));
+    d.append(top, el("div", "why", a.reason || "flagged"));
+    root.append(d);
+  }
+}
+
+/* ---------- network graph ---------- */
+let cy = null;
+function renderGraph(edges) {
+  if (typeof cytoscape === "undefined") { $("graph").replaceChildren(el("div", "empty", "Graph library failed to load (offline?)")); return; }
+  const users = new Set(edges.map((e) => e.source)), merchants = new Set(edges.map((e) => e.target));
+  const nodeId = (kind, name) => kind + ":" + name;
+  const els = [];
+  for (const u of users) els.push({data: {id: nodeId("u", u), label: u, kind: "user"}});
+  // a name that is both a user and a merchant (payment rings) keeps its user node; edges point at it
+  for (const m of merchants) if (!users.has(m)) els.push({data: {id: nodeId("m", m), label: m, kind: "merchant"}});
+  for (const e of edges) {
+    const tgt = users.has(e.target) ? nodeId("u", e.target) : nodeId("m", e.target);
+    els.push({data: {id: nodeId("u", e.source) + ">" + tgt, source: nodeId("u", e.source), target: tgt,
+                     flagged: e.flagged ? 1 : 0, w: Math.min(6, 1 + Math.log2(e.count))}});
+  }
+  if (!cy) {
+    cy = cytoscape({
+      container: $("graph"), elements: [], minZoom: 0.3, maxZoom: 3,
+      style: [
+        {selector: "node", style: {label: "data(label)", color: css("--muted"), "font-size": 9, "text-valign": "bottom", "text-margin-y": 3, width: 16, height: 16}},
+        {selector: "node[kind='user']", style: {"background-color": css("--info")}},
+        {selector: "node[kind='merchant']", style: {"background-color": css("--muted"), shape: "round-rectangle", width: 20}},
+        {selector: "edge", style: {width: "data(w)", "line-color": css("--line"), "target-arrow-color": css("--line"), "target-arrow-shape": "triangle", "curve-style": "bezier", opacity: .9}},
+        {selector: "edge[flagged = 1]", style: {"line-color": css("--bad"), "target-arrow-color": css("--bad")}},
+      ],
+    });
+  }
+  const have = new Set(cy.nodes().map((n) => n.id()));
+  const want = new Set(els.filter((e) => !e.data.source).map((e) => e.data.id));
+  const sameNodes = have.size === want.size && [...want].every((id) => have.has(id));
+  cy.batch(() => {
+    cy.elements().remove();
+    cy.add(els);
+  });
+  if (!sameNodes) cy.layout({name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 70, fit: true, padding: 20}).run();
+}
+
+/* ---------- socket ---------- */
+let delay = 500;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  const ws = new WebSocket(proto + location.host + "/ws/dashboard/");
+  ws.onopen = () => { delay = 500; $("dot").classList.add("live"); $("conn").textContent = "live"; };
+  ws.onmessage = (ev) => {
+    const s = JSON.parse(ev.data);
+    if (s.type !== "snapshot") return;
+    renderKpis(s.kpis); renderSpark(s.series); renderFeed(s.transactions);
+    renderGateways(s.gateways); renderAlerts(s.alerts); renderGraph(s.graph);
+    $("updated").textContent = "updated " + new Date(s.server_time).toLocaleTimeString();
+  };
+  ws.onclose = (ev) => {
+    $("dot").classList.remove("live");
+    $("conn").textContent = ev.code === 4403 || ev.code === 1006 && delay > 4000 ? "not authorised — sign in as staff at /admin/" : "reconnecting…";
+    setTimeout(connect, delay); delay = Math.min(delay * 2, 8000);
+  };
+}
+connect();
+</script>
+</body>
+</html>

@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -20,17 +21,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-3d6=$%#@y*zi02rx#lsnx=t79%c&@-0-6(%$-d=6(e05tl5i=t'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-dev-only-change-me')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if os.environ.get('DJANGO_ALLOWED_HOSTS') else []
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -40,6 +42,7 @@ INSTALLED_APPS = [
     'fraudshield',
     'rest_framework',
     'channels',
+    'rest_framework_simplejwt',
 ]
 
 MIDDLEWARE = [
@@ -71,6 +74,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'PayPulse.wsgi.application'
+ASGI_APPLICATION = 'PayPulse.asgi.application'
 
 
 # Database
@@ -102,12 +106,34 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [("127.0.0.1", 6379)]},
-    },
+# Redis if REDIS_URL is set, otherwise an in-memory layer (single process, dev only).
+if os.environ.get('REDIS_URL'):
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [os.environ['REDIS_URL']]},
+        },
+    }
+else:
+    CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
 }
+
+# Payment providers (set via environment, never commit secrets)
+PAYPAL_MODE = os.environ.get('PAYPAL_MODE', 'sandbox')
+PAYPAL_SECRET = os.environ.get('PAYPAL_SECRET', '')
+
+# Trust X-Forwarded-For only when behind a proxy you control
+TRUST_PROXY_HEADERS = os.environ.get('TRUST_PROXY_HEADERS', '0') == '1'
+
+# Fraud
+FRAUD_MODEL_PATH = BASE_DIR / 'fraud_model.pkl'
+FRAUD_THRESHOLD = 0.7
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/

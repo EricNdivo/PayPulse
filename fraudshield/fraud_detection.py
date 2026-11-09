@@ -1,48 +1,82 @@
+import logging
+import math
+from datetime import timedelta
 
-from .models import Transaction, FraudAlert
-from sklearn.ensemble import IsolationForest
 import joblib
 import networkx as nx
-from django.utils import timezone
+from django.conf import settings
+from django.db.models import Avg
+
+from .models import FraudAlert, Transaction
+
+logger = logging.getLogger(__name__)
+
+_model = None
+_model_loaded = False
+
+
+def _get_model():
+    """Load the trained model once; None if absent (heuristics are used instead)."""
+    global _model, _model_loaded
+    if not _model_loaded:
+        _model_loaded = True
+        try:
+            _model = joblib.load(settings.FRAUD_MODEL_PATH)
+        except (FileNotFoundError, OSError):
+            logger.warning("No fraud model at %s; using heuristic scoring", settings.FRAUD_MODEL_PATH)
+    return _model
+
 
 class FraudDetector:
-    def __init__(self):
-        self.model = joblib.load('fraud_model.pkl') 
-        self.graph = nx.DiGraph()  
-    def update_graph(self, transaction):
-        self.graph.add_node(transaction.user.username)
-        self.graph.add_node(transaction.merchant)
-        self.graph.add_edge(transaction.user.username, transaction.merchant, amount=transaction.amount)
+    """Scores a transaction using an optional ML model, heuristics and payment-graph cycles.
 
-    def detect_circular_payments(self, transaction):
+    Model feature order: [amount, hour_of_day, transactions_in_last_hour, amount / user_avg].
+    """
+
+    def __init__(self):
+        self.graph = nx.DiGraph()
+        for u, m, a in Transaction.objects.filter(status='completed').values_list(
+                'user__username', 'merchant', 'amount'):
+            self.graph.add_edge(u, m, amount=float(a))
+
+    def features(self, tx):
+        since = tx.created_at - timedelta(hours=1)
+        velocity = Transaction.objects.filter(user=tx.user, created_at__gte=since).exclude(pk=tx.pk).count()
+        avg = (Transaction.objects.filter(user=tx.user, status='completed').exclude(pk=tx.pk)
+               .aggregate(a=Avg('amount'))['a'])
+        ratio = float(tx.amount / avg) if avg else 1.0
+        return [float(tx.amount), tx.created_at.hour, velocity, ratio]
+
+    def detect_anomaly(self, feats):
+        model = _get_model()
+        if model is not None:
+            if hasattr(model, 'predict_proba'):
+                score = float(model.predict_proba([feats])[0][1])
+            else:  # e.g. IsolationForest: lower decision_function => more anomalous
+                score = 1 / (1 + math.exp(10 * float(model.decision_function([feats])[0])))
+        else:
+            _, hour, velocity, ratio = feats
+            score = min(1.0, 0.15 * max(velocity - 2, 0) + 0.1 * max(ratio - 1, 0) + (0.2 if hour < 5 else 0))
+        reason = "High anomaly score (velocity/amount/time)" if score > settings.FRAUD_THRESHOLD else ""
+        return score, reason
+
+    def detect_circular_payments(self, tx):
+        self.graph.add_edge(tx.user.username, tx.merchant, amount=float(tx.amount))
         try:
-            cycles = nx.find_cycle(self.graph, source=transaction.user.username)
+            nx.find_cycle(self.graph, source=tx.user.username)
             return True, "Suspicious circular payment pattern detected"
         except nx.NetworkXNoCycle:
             return False, ""
 
-    def detect_anomaly(self, transaction):
-        features = [
-            transaction.amount,
-            (timezone.now() - transaction.created_at).total_seconds() / 3600,  
-            float(transaction.ip_address.split('.')[-1]) if transaction.ip_address else 0  
-        ]
-        score = self.model.predict_proba([features])[0][1] if hasattr(self.model, 'predict_proba') else 0.5
-        return score, "High anomaly score" if score > 0.7 else ""
+    def analyze_transaction(self, tx):
+        ml_score, ml_reason = self.detect_anomaly(self.features(tx))
+        graph_hit, graph_reason = self.detect_circular_payments(tx)
 
-    def analyze_transaction(self, transaction):
-        self.update_graph(transaction)
-        ml_score, ml_reason = self.detect_anomaly(transaction)
-        graph_detected, graph_reason = self.detect_circular_payments(transaction)
+        score = max(ml_score, 0.8 if graph_hit else 0.0)
+        reason = ml_reason or graph_reason
 
-        final_score = max(ml_score, 0.8 if graph_detected else 0)
-        final_reason = ml_reason or graph_reason
-
-        if final_score > 0.7:
-            FraudAlert.objects.create(transaction=transaction, score=final_score, reason=final_reason)
-            transaction.status = 'flagged'
-        else:
-            transaction.status = 'completed'
-        transaction.save()
-
-        return final_score, final_reason
+        if score > settings.FRAUD_THRESHOLD:
+            FraudAlert.objects.create(transaction=tx, score=score, reason=reason)
+            tx.status = 'flagged'
+            tx.save(update_fields=['status'])
+        return score, reason
